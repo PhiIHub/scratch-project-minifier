@@ -2,121 +2,134 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scratch SB3 Cleaner</title>
-  <link href="https://cdn.jsdelivr.net/npm/milligram@1.4.1/dist/milligram.min.css" rel="stylesheet">
-  <style>
-    body { max-width: 700px; margin: 3em auto; }
-    #progress-bar {
-      background: #f3f3f3;
-      border-radius: 4px;
-      overflow: hidden;
-      margin-top: 1em;
-      height: 1.5em;
-    }
-    #progress-fill {
-      background: #33c3f0;
-      width: 0%;
-      height: 100%;
-      transition: width 0.3s;
-    }
-  </style>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
+  <div class="container">
+    <h2>Scratch SB3 Cleaner</h2>
+    <input type="file" id="fileInput" accept=".sb3">
+    <label><input type="checkbox" id="minifyVars"> Minify Variables</label>
+    <button id="cleanBtn">Clean Project</button>
+    <progress id="progressBar" max="100" value="0" style="width:100%;"></progress>
+  </div>
 
-<h3>Scratch SB3 Cleaner</h3>
-<p>Upload a .sb3 file to remove unused variables, sounds, and clean blocks.</p>
-<input type="file" id="inputFile" accept=".sb3">
-<button class="button" id="cleanBtn" disabled>Clean & Download</button>
-<div id="progress-bar"><div id="progress-fill"></div></div>
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const cleanBtn = document.getElementById('cleanBtn');
+    const progressBar = document.getElementById('progressBar');
+    const minifyBox = document.getElementById('minifyVars');
 
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script>
-  const inputFile = document.getElementById('inputFile');
-  const cleanBtn = document.getElementById('cleanBtn');
-  const fill = document.getElementById('progress-fill');
-
-  let zip, projectJson;
-
-  function updateProgress(percent) {
-    fill.style.width = percent + '%';
-  }
-
-  inputFile.addEventListener('change', async () => {
-    if (!inputFile.files.length) return;
-    cleanBtn.disabled = true;
-    updateProgress(0);
-    const file = inputFile.files[0];
-    const data = await file.arrayBuffer();
-    zip = await JSZip.loadAsync(data);
-    updateProgress(20);
-    const pjFile = zip.file("project.json");
-    if (!pjFile) return;
-    const projectJsonText = await pjFile.async("text");
-    projectJson = JSON.parse(projectJsonText);
-    updateProgress(40);
-    cleanBtn.disabled = false;
-  });
-
-  function count(str, sub) {
-    let i = 0, pos = 0;
-    while ((pos = str.indexOf(sub, pos)) !== -1) { i++; pos += sub.length; }
-    return i;
-  }
-
-  function cleanVariables(pj) {
-    const json = JSON.stringify(pj);
-    const stage = pj.targets.find(t => t.isStage);
-    for (const id in stage.variables) {
-      if (count(json, id) <= 1) delete stage.variables[id];
+    function updateProgress(val) {
+      progressBar.value = val;
     }
-    for (const target of pj.targets) {
-      if (target.isStage || !target.variables) continue;
-      const tJson = JSON.stringify(target);
-      for (const id in target.variables) {
-        if (count(tJson, id) <= 1) delete target.variables[id];
+
+    function generateShortNames(count) {
+      const names = []
+      const chars = 'abcdefghijklmnopqrstuvwxyz'
+      for (let i = 0; i < chars.length && names.length < count; i++) names.push(chars[i])
+      for (let i = 0; i < chars.length && names.length < count; i++)
+        for (let j = 0; j < chars.length && names.length < count; j++)
+          names.push(chars[i]+chars[j])
+      return names
+    }
+
+    function cleanJSON(project, minify) {
+      const fullText = JSON.stringify(project)
+
+      // Clean stage variables
+      const stage = project.targets.find(t => t.isStage)
+      const globalVars = stage.variables || {}
+      const keepGlobal = {}
+      for (const [id, val] of Object.entries(globalVars)) {
+        if ((fullText.match(new RegExp(id, 'g')) || []).length > 1)
+          keepGlobal[id] = val
       }
-    }
-  }
+      stage.variables = keepGlobal
 
-  function cleanSounds(pj) {
-    const json = JSON.stringify(pj);
-    for (const target of pj.targets) {
-      if (!target.sounds) continue;
-      target.sounds = target.sounds.filter(s => count(json, s.assetId) > 1);
-    }
-  }
+      // Clean sprite/local variables
+      project.targets.forEach(target => {
+        if (target.isStage) return
+        const localVars = target.variables || {}
+        const keepLocal = {}
+        const targetText = JSON.stringify(target)
+        for (const [id, val] of Object.entries(localVars)) {
+          if ((targetText.match(new RegExp(id, 'g')) || []).length > 1)
+            keepLocal[id] = val
+        }
+        target.variables = keepLocal
+      })
 
-  function clearShadowText(pj) {
-    for (const target of pj.targets) {
-      for (const block of Object.values(target.blocks || {})) {
-        for (const input of Object.values(block.inputs || {})) {
-          if (Array.isArray(input) && input.length === 3 && Array.isArray(input[2]) && typeof input[2][1] === 'string') {
-            input[2][1] = '';
+      // Clean shadow input text
+      project.targets.forEach(target => {
+        for (const block of Object.values(target.blocks || {})) {
+          if (!block.inputs) continue
+          for (const key in block.inputs) {
+            const val = block.inputs[key]
+            if (Array.isArray(val) && val.length >= 3 && val[0] === 3 && typeof val[1] === 'string') {
+              if (Array.isArray(val[2]) && typeof val[2][1] === 'string') val[2][1] = ''
+            }
           }
         }
+      })
+
+      // Clean unused sounds
+      const allText = JSON.stringify(project)
+      project.targets.forEach(target => {
+        if (!target.sounds) return
+        target.sounds = target.sounds.filter(s => (allText.match(new RegExp(s.assetId, 'g')) || []).length > 1)
+      })
+
+      // Minify variable/list names
+      if (minify) {
+        let allVars = []
+        project.targets.forEach(t => {
+          if (!t.variables) return
+          for (const [id, v] of Object.entries(t.variables)) allVars.push({ target: t, id, val: v })
+        })
+        const names = generateShortNames(allVars.length)
+        allVars.forEach((v, i) => {
+          const newName = names[i]
+          const oldName = v.val[0]
+          const oldID = v.id
+          v.val[0] = newName
+          const str = JSON.stringify(project)
+            .replaceAll(oldName, newName)
+            .replaceAll(oldID, oldID) // keep ID
+          project = JSON.parse(str)
+        })
       }
+
+      return project
     }
-  }
 
-  cleanBtn.addEventListener('click', async () => {
-    updateProgress(50);
-    cleanVariables(projectJson);
-    updateProgress(65);
-    cleanSounds(projectJson);
-    updateProgress(80);
-    clearShadowText(projectJson);
-    zip.file("project.json", JSON.stringify(projectJson));
-    updateProgress(90);
-    const blob = await zip.generateAsync({ type: 'blob' });
-    updateProgress(100);
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = inputFile.files[0].name.replace(/\.sb3$/, '') + '_cleaned.sb3';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
-</script>
+    cleanBtn.onclick = async () => {
+      const file = fileInput.files[0]
+      if (!file) return
+      updateProgress(10)
 
+      const zip = await JSZip.loadAsync(file)
+      updateProgress(30)
+
+      const jsonData = await zip.file("project.json").async("string")
+      const project = JSON.parse(jsonData)
+      updateProgress(40)
+
+      const cleaned = cleanJSON(project, minifyBox.checked)
+      updateProgress(60)
+
+      zip.file("project.json", JSON.stringify(cleaned))
+      updateProgress(80)
+
+      const blob = await zip.generateAsync({ type: "blob" })
+      updateProgress(100)
+
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = file.name.replace('.sb3', '_cleaned.sb3')
+      a.click()
+    }
+  </script>
 </body>
 </html>
