@@ -1,1 +1,1 @@
-use (here)[https://phiihub.github.io/scratch-project-minifier/]
+use [here](https://phiihub.github.io/scratch-project-minifier/)
