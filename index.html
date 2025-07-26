@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>Scratch SB3 Cleaner</title>
+<style>
+  body { font-family: sans-serif; max-width: 600px; margin: 2em auto; }
+  label, button { font-size: 1rem; }
+  #log { white-space: pre-wrap; background: #eee; padding: 1em; height: 200px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<h1>Scratch SB3 Cleaner</h1>
+<p>Upload a Scratch 3 project (.sb3) to remove unused variables and sounds.</p>
+<input type="file" id="inputFile" accept=".sb3" />
+<br /><br />
+<button id="cleanBtn" disabled>Clean and Download</button>
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+  const inputFile = document.getElementById('inputFile');
+  const cleanBtn = document.getElementById('cleanBtn');
+  const log = document.getElementById('log');
+
+  let zip = null;
+  let projectJsonText = null;
+  let projectJson = null;
+
+  function logMsg(msg) {
+    log.textContent += msg + '\n';
+    log.scrollTop = log.scrollHeight;
+  }
+
+  inputFile.addEventListener('change', async () => {
+    if (!inputFile.files.length) {
+      cleanBtn.disabled = true;
+      return;
+    }
+    cleanBtn.disabled = true;
+    log.textContent = '';
+
+    const file = inputFile.files[0];
+    logMsg(`Loading "${file.name}" ...`);
+
+    try {
+      const data = await file.arrayBuffer();
+      zip = await JSZip.loadAsync(data);
+      const pjFile = zip.file("project.json");
+      if (!pjFile) {
+        logMsg("Error: project.json not found in the .sb3 file.");
+        return;
+      }
+      projectJsonText = await pjFile.async("text");
+      projectJson = JSON.parse(projectJsonText);
+      logMsg("project.json loaded and parsed.");
+      cleanBtn.disabled = false;
+    } catch(e) {
+      logMsg("Error reading the file: " + e);
+    }
+  });
+
+  function countOccurrences(str, sub) {
+    let count = 0, pos = 0;
+    while (true) {
+      pos = str.indexOf(sub, pos);
+      if (pos === -1) break;
+      count++;
+      pos += sub.length;
+    }
+    return count;
+  }
+
+  function cleanVariables(project) {
+    const fullJson = JSON.stringify(project);
+    const stage = project.targets.find(t => t.isStage);
+    if (!stage) return;
+    const stageVars = stage.variables || {};
+
+    // Clean global vars (stage)
+    for (const id of Object.keys(stageVars)) {
+      if (countOccurrences(fullJson, id) <= 1) {
+        delete stageVars[id];
+      }
+    }
+
+    // Clean locals (sprites)
+    for (const target of project.targets) {
+      if (target.isStage) continue;
+      const localVars = target.variables || {};
+      const localJson = JSON.stringify(target);
+      for (const id of Object.keys(localVars)) {
+        if (countOccurrences(localJson, id) <= 1) {
+          delete localVars[id];
+        }
+      }
+    }
+  }
+
+  function clearShadowText(project) {
+    for (const target of project.targets) {
+      if (!target.blocks) continue;
+      for (const block of Object.values(target.blocks)) {
+        if (!block.inputs) continue;
+        for (const val of Object.values(block.inputs)) {
+          if (Array.isArray(val) && val.length >= 3) {
+            const [type, realId, shadow] = val;
+            if (type === 3 && Array.isArray(shadow) && shadow.length === 2 && typeof shadow[1] === "string") {
+              shadow[1] = "";
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function cleanSounds(project) {
+    const fullJson = JSON.stringify(project);
+    for (const target of project.targets) {
+      if (!target.sounds) continue;
+      target.sounds = target.sounds.filter(sound => {
+        if (!sound.assetId) return false;
+        return countOccurrences(fullJson, sound.assetId) > 1;
+      });
+    }
+  }
+
+  cleanBtn.addEventListener('click', async () => {
+    if (!projectJson) {
+      alert("Load a valid .sb3 file first.");
+      return;
+    }
+
+    log.textContent = '';
+    logMsg("Cleaning variables...");
+    cleanVariables(projectJson);
+    logMsg("Clearing shadow text...");
+    clearShadowText(projectJson);
+    logMsg("Cleaning sounds...");
+    cleanSounds(projectJson);
+
+    logMsg("Updating project.json in zip...");
+    const newProjectJsonText = JSON.stringify(projectJson);
+    zip.file("project.json", newProjectJsonText);
+
+    logMsg("Generating cleaned .sb3...");
+    const content = await zip.generateAsync({type:"blob"});
+    const cleanedName = inputFile.files[0].name.replace(/\.sb3$/i, "") + "_cleaned.sb3";
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(content);
+    a.download = cleanedName;
+    a.click();
+    URL.revokeObjectURL(a.href);
+
+    logMsg("Done. Download should start automatically.");
+  });
+</script>
+
+</body>
+</html>
