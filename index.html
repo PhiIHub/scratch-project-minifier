@@ -43,7 +43,8 @@
       const globalVars = stage.variables || {}
       const keepGlobal = {}
       for (const [id, val] of Object.entries(globalVars)) {
-        if ((fullText.match(new RegExp(id, 'g')) || []).length > 1)
+        const safeID = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        if ((fullText.match(new RegExp(safeID, 'g')) || []).length > 1)
           keepGlobal[id] = val
       }
       stage.variables = keepGlobal
@@ -55,7 +56,8 @@
         const keepLocal = {}
         const targetText = JSON.stringify(target)
         for (const [id, val] of Object.entries(localVars)) {
-          if ((targetText.match(new RegExp(id, 'g')) || []).length > 1)
+          const safeID = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          if ((targetText.match(new RegExp(safeID, 'g')) || []).length > 1)
             keepLocal[id] = val
         }
         target.variables = keepLocal
@@ -78,7 +80,10 @@
       const allText = JSON.stringify(project)
       project.targets.forEach(target => {
         if (!target.sounds) return
-        target.sounds = target.sounds.filter(s => (allText.match(new RegExp(s.assetId, 'g')) || []).length > 1)
+        target.sounds = target.sounds.filter(s => {
+          const safeID = s.assetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          return (allText.match(new RegExp(safeID, 'g')) || []).length > 1
+        })
       })
 
       // Minify variable/list names
@@ -94,9 +99,11 @@
           const oldName = v.val[0]
           const oldID = v.id
           v.val[0] = newName
+          const safeOldName = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const safeOldID = oldID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
           const str = JSON.stringify(project)
-            .replaceAll(oldName, newName)
-            .replaceAll(oldID, oldID) // keep ID
+            .replaceAll(new RegExp(safeOldName, 'g'), newName)
+            .replaceAll(new RegExp(safeOldID, 'g'), oldID)
           project = JSON.parse(str)
         })
       }
